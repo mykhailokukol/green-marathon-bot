@@ -33,41 +33,40 @@ CHOOSE_CITY, TYPE_NAME, TYPE_EMAIL, DELIVERY_QUESTION, FREQUENCY_QUESTION, FINIS
     range(6)
 )
 
+SUPER_GIFT = "..."
+
 
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
-    # Welcome message + ask for confidential data
-    markup = ReplyKeyboardMarkup(
-        [
-            InlineKeyboardButton("Разрешить"),
-            InlineKeyboardButton("Не разрешать"),
-        ]
-    )
-    await update.message.reply_text(
-        "Приветственное сообщение\nСогласие о предоставлении персональных данных и на получение рассылок",
-        reply_markup=markup,
-    )
-
     # Log data
     log.warn(f"User [{update.message.from_user.id}] pressed /start")
 
     # Save user data
-    # TODO: Move to the start of the next step ?
     user_exists = USERS_COLLECTION.find({"user_id": update.message.from_user.id})
     user_exists = await user_exists.to_list(length=None)
 
     if user_exists:
-        # TODO: Negotiate with customer
-        await update.message.reply_text("Вы уже принимаете участие")
+        await update.message.reply_text(
+            "Вы уже зарегестрированы",
+            reply_markup=ReplyKeyboardRemove(),
+        )
         return ConversationHandler.END
     else:
-        user_data = {
-            "datetime_joined": datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
-            "user_id": update.message.from_user.id,
-        }
-        await USERS_COLLECTION.insert_one(user_data)
+        # Welcome message + ask for confidential data
+        markup = ReplyKeyboardMarkup(
+            [
+                [
+                    "Разрешить",
+                    "Не разрешать",
+                ]
+            ]
+        )
+        await update.message.reply_text(
+            "Приветственное сообщение\nСогласие о предоставлении персональных данных и на получение рассылок",
+            reply_markup=markup,
+        )
 
     # Next step
     return CHOOSE_CITY
@@ -80,16 +79,16 @@ async def choose_city(
     private_data_acception = update.message.text.lower()
     if private_data_acception == "не разрешать":
         await update.message.reply_text(
-            "Если хотите получить подарок, необходимо заполнить анкету. Если передумаете, /start"
+            "Если хотите получить подарок, необходимо заполнить анкету. Если передумаете, /start",
+            reply_markup=ReplyKeyboardRemove(),
         )
         return ConversationHandler.END
 
     # City chooser dialog
+    cities_cursor = CITIES_COLLECTION.find({})
+    cities = await cities_cursor.to_list(length=None)
     markup = ReplyKeyboardMarkup(
-        [
-            InlineKeyboardButton(city["name"])
-            for city in CITIES_COLLECTION.find({}).to_list(length=None)
-        ]
+        [[InlineKeyboardButton(city["name"])] for city in cities]
     )
     await update.message.reply_text(
         "Выберите город: ",
@@ -106,7 +105,10 @@ async def type_name(
 ) -> int:
     context.user_data["city"] = update.message.text
 
-    await update.message.reply_text("Введите ФИО: ")
+    await update.message.reply_text(
+        "Введите ФИО: ",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
     # Next step
     return TYPE_EMAIL
@@ -118,7 +120,10 @@ async def type_email(
 ) -> int:
     context.user_data["name"] = update.message.text
 
-    await update.message.reply_text("Введите почту: ")
+    await update.message.reply_text(
+        "Введите почту: ",
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
     # Next step
     return DELIVERY_QUESTION
@@ -132,9 +137,9 @@ async def delivery_question(
 
     markup = ReplyKeyboardMarkup(
         [
-            InlineKeyboardButton("Готовую еду"),
-            InlineKeyboardButton("Продукты"),
-            InlineKeyboardButton("Заказываю и то, и другое"),
+            ["Готовую еду"],
+            ["Продукты"],
+            ["Заказываю и то, и другое"],
         ]
     )
     await update.message.reply_text(
@@ -154,9 +159,9 @@ async def frequency_question(
 
     markup = ReplyKeyboardMarkup(
         [
-            InlineKeyboardButton("Несколько раз в неделю"),
-            InlineKeyboardButton("Несколько раз в месяц"),
-            InlineKeyboardButton("Несколько раз в год"),
+            ["Несколько раз в неделю"],
+            ["Несколько раз в месяц"],
+            ["Несколько раз в год"],
         ]
     )
     await update.message.reply_text(
@@ -175,20 +180,106 @@ async def finish(
     context.user_data["frequency"] = update.message.text
 
     # Give 1 random gift from DB
-    gifts = await GIFTS_COLLECTION.find({"count": {"$gt": 0}}).to_list()
+    gifts_cursor = GIFTS_COLLECTION.find({})
+    # gifts_cursor = GIFTS_COLLECTION.find({"count": {"$gt": 0}})
+    gifts = await gifts_cursor.to_list(length=None)
     if not gifts:
-        await update.message.reply_text("Все подарки закончились")
+        await update.message.reply_text(
+            "Все подарки закончились",
+            reply_markup=ReplyKeyboardRemove(),
+        )
     else:
         gift = random.choice(gifts)
         await update.message.reply_text(
-            f"Спасибо за прохождение анкеты, ваш подарок: {gift}"
+            f"Спасибо за прохождение анкеты, ваш подарок: {gift['name']}",
+            reply_markup=ReplyKeyboardRemove(),
         )
 
+    # Save to DB
+    user_data = {
+        "datetime_joined": datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S"),
+        "user_id": update.message.from_user.id,
+        "private_data_access": True,
+        "fullname": context.user_data["name"],
+        "email": context.user_data["email"],
+        "city": context.user_data["city"],
+        "delivery_method": context.user_data["delivery"],
+        "delivery_frequency": context.user_data["frequency"],
+    }
+    await USERS_COLLECTION.insert_one(user_data)
+
     # Super giveaway
-    super_gift = "..."
     number = await set_random_number(USERS_COLLECTION)
-    text = f"Поздравляем! Вы становитесь участником розыгрыша главного приза {super_gift}, ваш номер {number}.\nС правилами розыгрыша можете ознакомиться в описании бота. В случае выигрыша Вы получите уведомление в боте с такого-то по такое-то время, за ним необходимо будет прийти на стенд и показать сообщение промоутеру."
+    text = f"Поздравляем! Вы становитесь участником розыгрыша главного приза {SUPER_GIFT}, ваш номер {number}.\nС правилами розыгрыша можете ознакомиться в описании бота. В случае выигрыша Вы получите уведомление в боте с такого-то по такое-то время, за ним необходимо будет прийти на стенд и показать сообщение промоутеру."
     await update.message.reply_text(text=text)
 
     # End
     return ConversationHandler.END
+
+
+async def cancel(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    """No description needed"""
+    await update.message.reply_text(
+        "Прекращаем последнюю операцию.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    return ConversationHandler.END
+
+
+async def send_notification(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    if int(update.message.from_user.id) == int(settings.MODERATOR_ID):
+        cities_cursor = CITIES_COLLECTION.find({})
+        cities = await cities_cursor.to_list(length=None)
+
+        for city in cities:
+            users_cursor = USERS_COLLECTION.find({"city": city["name"]})
+            users = await users_cursor.to_list(length=None)
+            try:
+                winner = random.choice(users)
+            except IndexError:
+                log.warn(f"No participants for city: {city['name']}")
+                continue
+
+            await USERS_COLLECTION.update_one(
+                {"user_id": winner["user_id"]},
+                {"$set": {"won_city_prize": True}},
+            )
+
+            await context.bot.send_message(
+                chat_id=winner["user_id"],
+                text=f"Поздравляем, Вы выиграли {SUPER_GIFT}!\nПолучите его на стенде до 15:00",
+            )
+
+        await update.message.reply_text(
+            "Рассылка отправлена и получена пользователями.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+        log.warn("Notifications sent.")
+
+
+async def send_last_notification(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> None:
+    users_cursor = USERS_COLLECTION.find({})
+    users = await users_cursor.to_list(length=None)
+
+    for user in users:
+        await context.bot.send_message(
+            chat_id=user["user_id"],
+            text="В конце дня уведомление текст еще текст и прочий текст",
+        )
+
+    await update.message.reply_text(
+        "Рассылка отправлена и получена пользователями.",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+
+    log.warn("Last notifications sent.")
