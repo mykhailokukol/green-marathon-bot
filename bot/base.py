@@ -1,15 +1,14 @@
 import datetime
 import logging
-import random
+import secrets
 
 from telegram import (
     InlineKeyboardButton,
-    InlineKeyboardMarkup,
     ReplyKeyboardMarkup,
     ReplyKeyboardRemove,
     Update,
 )
-from telegram.ext import ContextTypes, ConversationHandler, CallbackContext
+from telegram.ext import ContextTypes, ConversationHandler
 
 from bot.config import settings
 from bot.db import USERS_COLLECTION, CITIES_COLLECTION, GIFTS_COLLECTION
@@ -33,7 +32,7 @@ CHOOSE_CITY, TYPE_NAME, TYPE_EMAIL, DELIVERY_QUESTION, FREQUENCY_QUESTION, FINIS
     range(6)
 )
 
-SUPER_GIFT = "..."
+SUPER_GIFT = "«Колонка умная SberBoom Mini с голосовым ассистентом Салют»"
 
 
 async def start(
@@ -58,13 +57,13 @@ async def start(
         markup = ReplyKeyboardMarkup(
             [
                 [
-                    "Разрешить",
-                    "Не разрешать",
+                    "Да",
+                    "Нет",
                 ]
             ]
         )
         await update.message.reply_text(
-            "Приветственное сообщение\nСогласие о предоставлении персональных данных и на получение рассылок",
+            "Здравствуйте! Это чат-бот СберМаркета. Чтобы получить гарантированный приз и стать участником главного розыгрыша, вам нужно заполнить мини-анкету.\n\nВы согласны на обработку персональных данных и получение сообщений от СберМаркета?",
             reply_markup=markup,
         )
 
@@ -77,9 +76,9 @@ async def choose_city(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
     private_data_acception = update.message.text.lower()
-    if private_data_acception == "не разрешать":
+    if private_data_acception == "нет":
         await update.message.reply_text(
-            "Если хотите получить подарок, необходимо заполнить анкету. Если передумаете, /start",
+            "Ой! Чтобы получить гарантированный подарок и участвовать в главном розыгрыше, нужно согласиться на обработку персональных данных.\nДля этого введите /start",
             reply_markup=ReplyKeyboardRemove(),
         )
         return ConversationHandler.END
@@ -91,7 +90,7 @@ async def choose_city(
         [[InlineKeyboardButton(city["name"])] for city in cities]
     )
     await update.message.reply_text(
-        "Выберите город: ",
+        "Отлично! Давайте познакомимся. Из какого Вы города? Выберите нужный из списка ниже.",
         reply_markup=markup,
     )
 
@@ -106,7 +105,7 @@ async def type_name(
     context.user_data["city"] = update.message.text
 
     await update.message.reply_text(
-        "Введите ФИО: ",
+        "Как вас зовут? Введите свои ФИО в поле ниже.",
         reply_markup=ReplyKeyboardRemove(),
     )
 
@@ -121,7 +120,7 @@ async def type_email(
     context.user_data["name"] = update.message.text
 
     await update.message.reply_text(
-        "Введите почту: ",
+        "Укажите, пожалуйста, ваш email.",
         reply_markup=ReplyKeyboardRemove(),
     )
 
@@ -137,13 +136,14 @@ async def delivery_question(
 
     markup = ReplyKeyboardMarkup(
         [
-            ["Готовую еду"],
-            ["Продукты"],
-            ["Заказываю и то, и другое"],
+            ["Заказываю еду"],
+            ["Заказываю продукты"],
+            ["И то и другое"],
+            ["Нет"],
         ]
     )
     await update.message.reply_text(
-        "Заказываете готовую еду или продукты для готовки?",
+        "Вы заказываете доставку готовой еды и продуктов?",
         reply_markup=markup,
     )
 
@@ -180,20 +180,20 @@ async def finish(
     context.user_data["frequency"] = update.message.text
 
     # Give 1 random gift from DB
-    gifts_cursor = GIFTS_COLLECTION.find({})
+    # gifts_cursor = GIFTS_COLLECTION.find({})
     # gifts_cursor = GIFTS_COLLECTION.find({"count": {"$gt": 0}})
-    gifts = await gifts_cursor.to_list(length=None)
-    if not gifts:
-        await update.message.reply_text(
-            "Все подарки закончились",
-            reply_markup=ReplyKeyboardRemove(),
-        )
-    else:
-        gift = random.choice(gifts)
-        await update.message.reply_text(
-            f"Спасибо за прохождение анкеты, ваш подарок: {gift['name']}",
-            reply_markup=ReplyKeyboardRemove(),
-        )
+    # gifts = await gifts_cursor.to_list(length=None)
+    # if not gifts:
+    #     await update.message.reply_text(
+    #         "Все подарки закончились",
+    #         reply_markup=ReplyKeyboardRemove(),
+    #     )
+    # else:
+    #     gift = random.choice(gifts)
+    #     await update.message.reply_text(
+    #         f"Спасибо за прохождение анкеты, ваш подарок: {gift['name']}",
+    #         reply_markup=ReplyKeyboardRemove(),
+    #     )
 
     # Save to DB
     user_data = {
@@ -210,8 +210,11 @@ async def finish(
 
     # Super giveaway
     number = await set_random_number(USERS_COLLECTION)
-    text = f"Поздравляем! Вы становитесь участником розыгрыша главного приза {SUPER_GIFT}, ваш номер {number}.\nС правилами розыгрыша можете ознакомиться в описании бота. В случае выигрыша Вы получите уведомление в боте с такого-то по такое-то время, за ним необходимо будет прийти на стенд и показать сообщение промоутеру."
-    await update.message.reply_text(text=text)
+    text = f"Спасибо, что заполнили анкету! Теперь вы можете забрать свой подарок на стойке СберМаркета.\n\nТакже вы становитесь участником нашего большого розыгрыша. Ваш уникальный номер – {number}. Уже вечером, в хх:00 мы определим, кто же получит главный приз. Не пропустите!"
+    await update.message.reply_text(
+        text=text,
+        reply_markup=ReplyKeyboardRemove(),
+    )
 
     # End
     return ConversationHandler.END
@@ -241,7 +244,7 @@ async def send_notification(
             users_cursor = USERS_COLLECTION.find({"city": city["name"]})
             users = await users_cursor.to_list(length=None)
             try:
-                winner = random.choice(users)
+                winner = secrets.choice(users)
             except IndexError:
                 log.warn(f"No participants for city: {city['name']}")
                 continue
@@ -268,18 +271,19 @@ async def send_last_notification(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> None:
-    users_cursor = USERS_COLLECTION.find({})
-    users = await users_cursor.to_list(length=None)
+    if int(update.message.from_user.id) == int(settings.MODERATOR_ID):
+        users_cursor = USERS_COLLECTION.find({})
+        users = await users_cursor.to_list(length=None)
 
-    for user in users:
-        await context.bot.send_message(
-            chat_id=user["user_id"],
-            text="В конце дня уведомление текст еще текст и прочий текст",
+        for user in users:
+            await context.bot.send_message(
+                chat_id=user["user_id"],
+                text="В конце дня уведомление текст еще текст и прочий текст",
+            )
+
+        await update.message.reply_text(
+            "Рассылка отправлена и получена пользователями.",
+            reply_markup=ReplyKeyboardRemove(),
         )
 
-    await update.message.reply_text(
-        "Рассылка отправлена и получена пользователями.",
-        reply_markup=ReplyKeyboardRemove(),
-    )
-
-    log.warn("Last notifications sent.")
+        log.warn("Last notifications sent.")
