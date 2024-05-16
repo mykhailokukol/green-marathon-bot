@@ -13,9 +13,10 @@ from bot.base import (
     type_name,
     type_email,
     delivery_question,
-    frequency_question,
+    # frequency_question,
     finish,
-    send_notification,
+    notification_choose_city,
+    notification_send,
     send_last_notification,
 )
 from bot.base import (
@@ -23,8 +24,9 @@ from bot.base import (
     TYPE_NAME,
     TYPE_EMAIL,
     DELIVERY_QUESTION,
-    FREQUENCY_QUESTION,
+    # FREQUENCY_QUESTION,
     FINISH,
+    NOTIFICATION_SEND,
 )
 from bot.config import settings
 
@@ -42,9 +44,9 @@ def main():
             DELIVERY_QUESTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, delivery_question)
             ],
-            FREQUENCY_QUESTION: [
-                MessageHandler(filters.TEXT & ~filters.COMMAND, frequency_question)
-            ],
+            # FREQUENCY_QUESTION: [
+            #     MessageHandler(filters.TEXT & ~filters.COMMAND, frequency_question)
+            # ],
             FINISH: [MessageHandler(filters.TEXT & ~filters.COMMAND, finish)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
@@ -52,9 +54,23 @@ def main():
     )
     app.add_handler(conv_handler)
 
-    app.add_handler(CommandHandler("send", send_notification))
+    moderator_conv_handler = ConversationHandler(
+        entry_points=[CommandHandler("send", notification_choose_city)],
+        states={
+            NOTIFICATION_SEND: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, notification_send)
+            ],
+        },
+        fallbacks=[
+            CommandHandler("cancel", cancel),
+        ],
+        allow_reentry=True,
+    )
+    app.add_handler(moderator_conv_handler)
+
     app.add_handler(CommandHandler("last", send_last_notification))
 
+    # Do run
     app.run_polling()
 
 

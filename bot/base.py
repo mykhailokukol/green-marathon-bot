@@ -1,3 +1,4 @@
+import re
 import datetime
 import logging
 import secrets
@@ -11,7 +12,7 @@ from telegram import (
 from telegram.ext import ContextTypes, ConversationHandler
 
 from bot.config import settings
-from bot.db import USERS_COLLECTION, CITIES_COLLECTION, GIFTS_COLLECTION
+from bot.db import USERS_COLLECTION, CITIES_COLLECTION
 from bot.services import set_random_number
 
 # Logging
@@ -28,11 +29,33 @@ log.addHandler(info_handler)
 log.addHandler(warn_handler)
 
 # Steps
-CHOOSE_CITY, TYPE_NAME, TYPE_EMAIL, DELIVERY_QUESTION, FREQUENCY_QUESTION, FINISH = (
-    range(6)
-)
+CHOOSE_CITY, TYPE_NAME, TYPE_EMAIL, DELIVERY_QUESTION, FINISH = range(5)
+NOTIFICATION_SEND = 5
 
 SUPER_GIFT = "«Колонка умная SberBoom Mini с голосовым ассистентом Салют»"
+
+
+async def validate(field: str, value: str):
+    match field:
+        case "start":
+            return value.lower() in ["да", "нет"]
+        case "city":
+            cities_cursor = CITIES_COLLECTION.find({})
+            cities = await cities_cursor.to_list(length=None)
+            return value in [city["name"] for city in cities]
+        case "name":
+            return len(value.split(" ")) == 3
+        case "email":
+            return bool(
+                re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", value)
+            )
+        case "delivery":
+            return value in [
+                "Заказываю еду",
+                "Заказываю продукты",
+                "И то и другое",
+                "Нет",
+            ]
 
 
 async def start(
@@ -76,6 +99,14 @@ async def choose_city(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
     private_data_acception = update.message.text.lower()
+
+    if not await validate("start", private_data_acception):
+        await update.message.reply_text(
+            "❌ Ошибка: Выберите значение из перечисленных ниже.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return await start(update, context)
+
     if private_data_acception == "нет":
         await update.message.reply_text(
             "Ой! Чтобы получить гарантированный подарок и участвовать в главном розыгрыше, нужно согласиться на обработку персональных данных.\nДля этого введите /start",
@@ -104,6 +135,23 @@ async def type_name(
 ) -> int:
     context.user_data["city"] = update.message.text
 
+    if not await validate("city", context.user_data["city"]):
+        await update.message.reply_text(
+            "❌ Ошибка: Выберите значение из перечисленных ниже.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        # City chooser dialog
+        cities_cursor = CITIES_COLLECTION.find({})
+        cities = await cities_cursor.to_list(length=None)
+        markup = ReplyKeyboardMarkup(
+            [[InlineKeyboardButton(city["name"])] for city in cities]
+        )
+        await update.message.reply_text(
+            "Из какого Вы города? Выберите нужный из списка ниже.",
+            reply_markup=markup,
+        )
+        return TYPE_NAME
+
     await update.message.reply_text(
         "Как вас зовут? Введите свои ФИО в поле ниже.",
         reply_markup=ReplyKeyboardRemove(),
@@ -118,6 +166,16 @@ async def type_email(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
     context.user_data["name"] = update.message.text
+    if not await validate("name", context.user_data["name"]):
+        await update.message.reply_text(
+            "❌ Ошибка: Введите полные фамилию, имя и отчество.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        await update.message.reply_text(
+            "Как вас зовут? Введите свои ФИО в поле ниже.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        return TYPE_EMAIL
 
     await update.message.reply_text(
         "Укажите, пожалуйста, ваш email.",
@@ -133,6 +191,13 @@ async def delivery_question(
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
     context.user_data["email"] = update.message.text
+    if not await validate("email", context.user_data["email"]):
+        await update.message.reply_text(
+            "❌ Ошибка: Введите корректный email.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+        return DELIVERY_QUESTION
 
     markup = ReplyKeyboardMarkup(
         [
@@ -148,52 +213,56 @@ async def delivery_question(
     )
 
     # Next step
-    return FREQUENCY_QUESTION
-
-
-async def frequency_question(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE,
-) -> int:
-    context.user_data["delivery"] = update.message.text
-
-    markup = ReplyKeyboardMarkup(
-        [
-            ["Несколько раз в неделю"],
-            ["Несколько раз в месяц"],
-            ["Несколько раз в год"],
-        ]
-    )
-    await update.message.reply_text(
-        "Как часто вы заказываете еду онлайн?",
-        reply_markup=markup,
-    )
-
-    # Next step
     return FINISH
+
+
+# async def frequency_question(
+#     update: Update,
+#     context: ContextTypes.DEFAULT_TYPE,
+# ) -> int:
+#     context.user_data["delivery"] = update.message.text
+
+#     markup = ReplyKeyboardMarkup(
+#         [
+#             ["Несколько раз в неделю"],
+#             ["Несколько раз в месяц"],
+#             ["Несколько раз в год"],
+#         ]
+#     )
+#     await update.message.reply_text(
+#         "Как часто вы заказываете еду онлайн?",
+#         reply_markup=markup,
+#     )
+
+#     # Next step
+#     return FINISH
 
 
 async def finish(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
-    context.user_data["frequency"] = update.message.text
+    context.user_data["delivery"] = update.message.text
 
-    # Give 1 random gift from DB
-    # gifts_cursor = GIFTS_COLLECTION.find({})
-    # gifts_cursor = GIFTS_COLLECTION.find({"count": {"$gt": 0}})
-    # gifts = await gifts_cursor.to_list(length=None)
-    # if not gifts:
-    #     await update.message.reply_text(
-    #         "Все подарки закончились",
-    #         reply_markup=ReplyKeyboardRemove(),
-    #     )
-    # else:
-    #     gift = random.choice(gifts)
-    #     await update.message.reply_text(
-    #         f"Спасибо за прохождение анкеты, ваш подарок: {gift['name']}",
-    #         reply_markup=ReplyKeyboardRemove(),
-    #     )
+    if not await validate("delivery", context.user_data["delivery"]):
+        await update.message.reply_text(
+            "❌ Ошибка: Выберите значение из перечисленных ниже.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+        markup = ReplyKeyboardMarkup(
+            [
+                ["Заказываю еду"],
+                ["Заказываю продукты"],
+                ["И то и другое"],
+                ["Нет"],
+            ]
+        )
+        await update.message.reply_text(
+            "Вы заказываете доставку готовой еды и продуктов?",
+            reply_markup=markup,
+        )
+
+        return FINISH
 
     # Save to DB
     user_data = {
@@ -204,7 +273,8 @@ async def finish(
         "email": context.user_data["email"],
         "city": context.user_data["city"],
         "delivery_method": context.user_data["delivery"],
-        "delivery_frequency": context.user_data["frequency"],
+        "won_city_prize": False,
+        # "delivery_frequency": context.user_data["frequency"],
     }
     await USERS_COLLECTION.insert_one(user_data)
 
@@ -232,39 +302,63 @@ async def cancel(
     return ConversationHandler.END
 
 
-async def send_notification(
+async def notification_choose_city(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
-) -> None:
-    if int(update.message.from_user.id) == int(settings.MODERATOR_ID):
-        cities_cursor = CITIES_COLLECTION.find({})
-        cities = await cities_cursor.to_list(length=None)
+) -> int:
+    if int(update.message.from_user.id) != int(settings.MODERATOR_ID):
+        return
 
-        for city in cities:
-            users_cursor = USERS_COLLECTION.find({"city": city["name"]})
-            users = await users_cursor.to_list(length=None)
-            try:
-                winner = secrets.choice(users)
-            except IndexError:
-                log.warn(f"No participants for city: {city['name']}")
-                continue
+    cities_cursor = CITIES_COLLECTION.find({})
+    cities = await cities_cursor.to_list(length=None)
 
-            await USERS_COLLECTION.update_one(
-                {"user_id": winner["user_id"]},
-                {"$set": {"won_city_prize": True}},
-            )
+    markup = ReplyKeyboardMarkup([[city["name"]] for city in cities])
 
-            await context.bot.send_message(
-                chat_id=winner["user_id"],
-                text=f"Поздравляем, Вы выиграли {SUPER_GIFT}!\nПолучите его на стенде до 15:00",
-            )
+    await update.message.reply_text(
+        "Выберите город победителя: ",
+        reply_markup=markup,
+    )
+
+    # Next step
+    return NOTIFICATION_SEND
+
+
+async def notification_send(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    city_name = update.message.text
+    winner = None
+
+    users_cursor = USERS_COLLECTION.find({"city": city_name, "won_city_prize": False})
+    users = await users_cursor.to_list(length=None)
+    try:
+        winner = secrets.choice(users)
+    except IndexError:
+        log.warn(f"No participants for city: {city_name}")
+
+    if winner:
+        await USERS_COLLECTION.update_one(
+            {"user_id": winner["user_id"]},
+            {"$set": {"won_city_prize": True}},
+        )
+
+        await context.bot.send_message(
+            chat_id=winner["user_id"],
+            text=f"Поздравляем, Вы выиграли {SUPER_GIFT}!\nПолучите его на стенде до 15:00",
+        )
 
         await update.message.reply_text(
-            "Рассылка отправлена и получена пользователями.",
+            f"Сообщение отправлено победителю [{winner['user_id']}].",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+    else:
+        await update.message.reply_text(
+            "В городе нет или не осталось участников.",
             reply_markup=ReplyKeyboardRemove(),
         )
 
-        log.warn("Notifications sent.")
+    return ConversationHandler.END
 
 
 async def send_last_notification(
@@ -287,3 +381,6 @@ async def send_last_notification(
         )
 
         log.warn("Last notifications sent.")
+
+
+# DRY is for weak people.
