@@ -13,8 +13,8 @@ from telegram.ext import ContextTypes, ConversationHandler
 from telegram.constants import ParseMode
 
 from bot.config import settings
-from bot.db import USERS_COLLECTION, CITIES_COLLECTION
-from bot.services import set_random_number
+from bot.db import PROMOCODES_COLLECTION, USERS_COLLECTION, CITIES_COLLECTION
+from bot.services import set_random_number, get_available_promocode
 
 # Logging
 formatter = logging.Formatter("%(levelname)s | %(name)s | %(asctime)s | %(message)s")
@@ -30,8 +30,8 @@ log.addHandler(info_handler)
 log.addHandler(warn_handler)
 
 # Steps
-CHOOSE_CITY, TYPE_NAME, TYPE_EMAIL, DELIVERY_QUESTION, FINISH = range(5)
-NOTIFICATION_SEND = 5
+CHOOSE_CITY, TYPE_NAME, TYPE_EMAIL, DELIVERY_QUESTION, AD_AGREEMENT, FINISH = range(6)
+NOTIFICATION_SEND = 6
 
 SUPER_GIFT = "«Колонка умная SberBoom Mini с голосовым ассистентом Салют»"
 
@@ -45,7 +45,12 @@ async def validate(field: str, value: str):
             cities = await cities_cursor.to_list(length=None)
             return value in [city["name"] for city in cities]
         case "name":
-            return len(value.split(" ")) == 3
+            return bool(
+                re.match(
+                    r"^[A-ZА-ЯЁ][a-zа-яё]+ [A-ZА-ЯЁ][a-zа-яё]+( [A-ZА-ЯЁ][a-zа-яё]+)?$",
+                    value,
+                )
+            )
         case "email":
             return bool(
                 re.match(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$", value)
@@ -57,6 +62,8 @@ async def validate(field: str, value: str):
                 "И то и другое",
                 "Нет",
             ]
+        case "ads":
+            return value.lower() in ["да", "нет"]
 
 
 async def start(
@@ -78,6 +85,14 @@ async def start(
         return ConversationHandler.END
     else:
         # Welcome message + ask for confidential data
+        welcome_message = (
+            "Здравствуйте! Это чат-бот СберМаркета. "
+            "Чтобы получить гарантированный приз и стать участником главного розыгрыша, "
+            "вам нужно заполнить мини-анкету и ознакомиться с правилами акции — sbermarket.ru/sp/Grbot. "
+            "\n\nВы согласны с правилами акции?"
+            "\n\nОзнакомиться с политикой обработки данных: "
+            "https://static.sbermarket.ru/statics/downloads/storefront/public/docs/personal_data_processing_policy.pdf"
+        )
         markup = ReplyKeyboardMarkup(
             [
                 [
@@ -86,43 +101,11 @@ async def start(
                 ]
             ]
         )
-        welcome_message_file_path = "media/Согласие_на_получение_рекламы_акции.pdf"
-        welcome_message = (
-            # "<b>Согласие на получение рекламы</b>"
-            # "\n\nЯ, субъект персональных данных, предоставляю ООО «Инстамарт Сервис» («<b>Оператор</b>»)"
-            # "(место нахождения: 115035, г. Москва, ул. Садовническая, д. 9А, этаж 5, помещ. I, ком. 1)"
-            # "согласие на обработку персональных данных."
-            # "\n\n<b>Цели обработки персональных данных:</b> на направление мне Оператором новостных и рекламных сообщений,"
-            # "в том числе, о проводимых акциях, мероприятиях, специальных предложениях Оператора и его партнеров,"
-            # "любым способом, в том числе, посредством электронной почты, сетей электросвязи, SMS-сообщений,"
-            # "push-сообщений, сообщений в мессенджерах с официальных аккаунтов СберМаркета,"
-            # "а также с использованием прочих каналов коммуникации, предполагающих прямой контакт со мной."
-            # "\n\n<b>Перечень обрабатываемых персональных данных:</b> фамилия, имя, отчество;"
-            # "телефонные номера, адреса электронной почты."
-            # "\n\n<b>Способы и средства обработки персональных данных:</b> любые действия (операции),"
-            # "допустимые законодательством, совершаемые как с использованием средств автоматизации,"
-            # "так и без использования таких средств или смешанным образом, включая сбор, запись, систематизацию,"
-            # "накопление, хранение, уточнение (обновление, изменение), извлечение, использование,"
-            # "передачу (предоставление, доступ, включая трансграничную), блокирование, удаление, уничтожение."
-            # "\n\n<b>Передача и поручение обработки персональных данных:</b> обработка осуществляется Оператором,"
-            # "а также третьими лицами, которые привлечены Оператором к обработке,"
-            # "или которым переданы персональные данные (или предоставлен доступ к ним) в указанных целях в соответствии"
-            # "с законодательством. Перечень таких лиц доступен по ссылке: https://sbermarket.ru/sp/data-processors-marketing "
-            # "\n\n<b>Срок обработки персональных данных и способ отзыва согласия:</b> согласие действует"
-            # "в течение 5 (пяти) лет с даты предоставления согласия. "
-            # "Согласие может быть отозвано путем направления заявления по адресу dpo@sbermarket.ru."
-            # "\n\nПри этом Оператор вправе продолжить обработку персональных данных"
-            # "при наличии иного законного основания."
-            "Здравствуйте! Это чат-бот СберМаркета. Чтобы получить гарантированный приз и стать участником главного розыгрыша, вам нужно заполнить мини-анкету."
-            "\n\nВы согласны на обработку персональных данных и получение сообщений от СберМаркета?"
+        await update.message.reply_text(
+            text=welcome_message,
+            reply_markup=markup,
+            parse_mode=ParseMode.HTML,
         )
-        with open(welcome_message_file_path, "rb") as file:
-            await update.message.reply_document(
-                caption=welcome_message,
-                reply_markup=markup,
-                document=file,
-                # parse_mode=ParseMode.HTML,
-            )
 
     # Next step
     return CHOOSE_CITY
@@ -247,32 +230,10 @@ async def delivery_question(
     )
 
     # Next step
-    return FINISH
+    return AD_AGREEMENT
 
 
-# async def frequency_question(
-#     update: Update,
-#     context: ContextTypes.DEFAULT_TYPE,
-# ) -> int:
-#     context.user_data["delivery"] = update.message.text
-
-#     markup = ReplyKeyboardMarkup(
-#         [
-#             ["Несколько раз в неделю"],
-#             ["Несколько раз в месяц"],
-#             ["Несколько раз в год"],
-#         ]
-#     )
-#     await update.message.reply_text(
-#         "Как часто вы заказываете еду онлайн?",
-#         reply_markup=markup,
-#     )
-
-#     # Next step
-#     return FINISH
-
-
-async def finish(
+async def ad_agreement(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> int:
@@ -296,6 +257,76 @@ async def finish(
             reply_markup=markup,
         )
 
+        return AD_AGREEMENT
+
+    agreement_message = (
+        "<b>Согласие на получение рекламы</b>"
+        "\n\nЯ, субъект персональных данных, предоставляю ООО «Инстамарт Сервис» («<b>Оператор</b>»)"
+        "(место нахождения: 115035, г. Москва, ул. Садовническая, д. 9А, этаж 5, помещ. I, ком. 1)"
+        "согласие на обработку персональных данных."
+        "\n\n<b>Цели обработки персональных данных:</b> на направление мне Оператором новостных и рекламных сообщений,"
+        "в том числе, о проводимых акциях, мероприятиях, специальных предложениях Оператора и его партнеров,"
+        "любым способом, в том числе, посредством электронной почты, сетей электросвязи, SMS-сообщений,"
+        "push-сообщений, сообщений в мессенджерах с официальных аккаунтов СберМаркета,"
+        "а также с использованием прочих каналов коммуникации, предполагающих прямой контакт со мной."
+        "\n\n<b>Перечень обрабатываемых персональных данных:</b> фамилия, имя, отчество;"
+        "телефонные номера, адреса электронной почты."
+        "\n\n<b>Способы и средства обработки персональных данных:</b> любые действия (операции),"
+        "допустимые законодательством, совершаемые как с использованием средств автоматизации,"
+        "так и без использования таких средств или смешанным образом, включая сбор, запись, систематизацию,"
+        "накопление, хранение, уточнение (обновление, изменение), извлечение, использование,"
+        "передачу (предоставление, доступ, включая трансграничную), блокирование, удаление, уничтожение."
+        "\n\n<b>Передача и поручение обработки персональных данных:</b> обработка осуществляется Оператором,"
+        "а также третьими лицами, которые привлечены Оператором к обработке,"
+        "или которым переданы персональные данные (или предоставлен доступ к ним) в указанных целях в соответствии"
+        "с законодательством. Перечень таких лиц доступен по ссылке: https://sbermarket.ru/sp/data-processors-marketing "
+        "\n\n<b>Срок обработки персональных данных и способ отзыва согласия:</b> согласие действует "
+        "в течение 5 (пяти) лет с даты предоставления согласия. "
+        "Согласие может быть отозвано путем направления заявления по адресу dpo@sbermarket.ru."
+        "\n\nПри этом Оператор вправе продолжить обработку персональных данных "
+        "при наличии иного законного основания."
+    )
+    markup = ReplyKeyboardMarkup(
+        [
+            ["Да", "Нет"],
+        ]
+    )
+    await update.message.reply_text(
+        "Согласны ли Вы получать рекламные сообщения от СберМаркета? (не обязательно)",
+        reply_markup=ReplyKeyboardRemove(),
+    )
+    await update.message.reply_text(
+        text=agreement_message,
+        reply_markup=markup,
+        parse_mode=ParseMode.HTML,
+    )
+
+    # Next step
+    return FINISH
+
+
+async def finish(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+) -> int:
+    context.user_data["ad_agreement"] = update.message.text
+
+    if not await validate("ads", context.user_data["ad_agreement"]):
+        await update.message.reply_text(
+            "❌ Ошибка: Выберите значение из перечисленных ниже.",
+            reply_markup=ReplyKeyboardRemove(),
+        )
+
+        markup = ReplyKeyboardMarkup(
+            [
+                ["Да", "Нет"],
+            ]
+        )
+        await update.message.reply_text(
+            "Согласны ли Вы получать рекламные сообщения от СберМаркета? (не обязательно)",
+            reply_markup=markup,
+        )
+
         return FINISH
 
     # Save to DB
@@ -308,13 +339,13 @@ async def finish(
         "city": context.user_data["city"],
         "delivery_method": context.user_data["delivery"],
         "won_city_prize": False,
-        # "delivery_frequency": context.user_data["frequency"],
+        "ad_agreement": context.user_data["ad_agreement"],
     }
     await USERS_COLLECTION.insert_one(user_data)
 
     # Super giveaway
     number = await set_random_number(USERS_COLLECTION)
-    text = f"Спасибо, что заполнили анкету! Теперь вы можете забрать свой подарок на стойке СберМаркета.\n\nТакже вы становитесь участником нашего большого розыгрыша. Ваш уникальный номер – {number}. Уже вечером, в хх:00 мы определим, кто же получит главный приз. Не пропустите!"
+    text = f"Спасибо, что заполнили анкету! Теперь вы можете забрать свой подарок на стойке СберМаркета.\n\nТакже вы становитесь участником нашего большого розыгрыша. Ваш уникальный номер – {number}. Уже вечером мы определим, кто же получит главный приз. Не пропустите!"
     await update.message.reply_text(
         text=text,
         reply_markup=ReplyKeyboardRemove(),
@@ -404,9 +435,11 @@ async def send_last_notification(
         users = await users_cursor.to_list(length=None)
 
         for user in users:
+            promocode = await get_available_promocode(PROMOCODES_COLLECTION)
+
             await context.bot.send_message(
                 chat_id=user["user_id"],
-                text="В конце дня уведомление текст еще текст и прочий текст",
+                text=f"Спасибо, что были сегодня с нами и поучаствовали в наших активностях! После насыщенного дня предлагаем подкрепиться: дарим скидку 200 ₽ на заказ из любого магазина или ресторана в СберМаркете от 2 000 ₽. Промокод {promocode} действует до 30.06",
             )
 
         await update.message.reply_text(

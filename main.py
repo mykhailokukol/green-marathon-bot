@@ -13,7 +13,7 @@ from bot.base import (
     type_name,
     type_email,
     delivery_question,
-    # frequency_question,
+    ad_agreement,
     finish,
     notification_choose_city,
     notification_send,
@@ -24,7 +24,7 @@ from bot.base import (
     TYPE_NAME,
     TYPE_EMAIL,
     DELIVERY_QUESTION,
-    # FREQUENCY_QUESTION,
+    AD_AGREEMENT,
     FINISH,
     NOTIFICATION_SEND,
 )
@@ -44,9 +44,9 @@ def main():
             DELIVERY_QUESTION: [
                 MessageHandler(filters.TEXT & ~filters.COMMAND, delivery_question)
             ],
-            # FREQUENCY_QUESTION: [
-            #     MessageHandler(filters.TEXT & ~filters.COMMAND, frequency_question)
-            # ],
+            AD_AGREEMENT: [
+                MessageHandler(filters.TEXT & ~filters.COMMAND, ad_agreement)
+            ],
             FINISH: [MessageHandler(filters.TEXT & ~filters.COMMAND, finish)],
         },
         fallbacks=[CommandHandler("cancel", cancel)],
